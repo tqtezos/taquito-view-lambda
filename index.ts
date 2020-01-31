@@ -23,13 +23,26 @@ async function get_entrypoint_type({target_contract_address, target_entrypoint_n
   }
 }
 
+/* Expected form: */
+/* [ { prim: 'unit' }, */
+/*   { prim: 'contract', args: [ { prim: 'nat' } ] } ] */
 async function get_view_entrypoint_types({target_contract_address, target_entrypoint_name='default'}:
                                          {target_contract_address:string, target_entrypoint_name?: string}): Promise<[object, object]> {
   const entrypoint_type = await get_entrypoint_type({target_contract_address: target_contract_address, target_entrypoint_name: target_entrypoint_name});
   if (entrypoint_type['prim'] === 'pair') {
     const entrypoint_type_args = Array.from(entrypoint_type['args']) as [object, object];
     if (entrypoint_type_args.length == 2) {
-      return entrypoint_type_args;
+      const parameter_type = entrypoint_type_args[0];
+      const callback_contract_type = entrypoint_type_args[1];
+      if (callback_contract_type['prim'] === 'contract') {
+        if (callback_contract_type['args']?.length === 1) {
+          return [parameter_type, callback_contract_type['args'][0]]
+        } else {
+          throw new Error(`Expected a single argument to 'contract', but found: ${callback_contract_type['args']}`)
+        }
+      } else {
+        throw new Error(`Expected a {prim: 'contract', ..}, but found: ${callback_contract_type['prim']}`)
+      }
     } else {
       throw new Error(`Expected an Array of length 2, but found: ${entrypoint_type_args}`);
     }
@@ -62,95 +75,140 @@ async function view_to_void_lambda({exec_lambda_address, target_contract_address
   const entrypoint_types = await get_view_entrypoint_types({target_contract_address: fa12_address, target_entrypoint_name: target_contract_entrypoint});
   const parameter_type = entrypoint_types[0];
   const callback_type = entrypoint_types[1];
+  /* p(target_contract_parameter); */
+
+  var target_contract_args;
+  if (target_contract_entrypoint === 'default') {
+    target_contract_args = [ { string: `%${target_contract_entrypoint}` },
+                             { prim: "pair",
+                               args:
+                                 [ parameter_type,
+                                   { prim: "contract", args: [ callback_type ] } ] } ]
+  } else {
+    target_contract_args = [ { prim: "pair",
+                               args:
+                                 [ parameter_type,
+                                   { prim: "contract", args: [ callback_type ] } ] } ]
+  }
+
   return (
-    [ { prim: '',
+    [ { prim: "PUSH",
+        args: [ { prim: "mutez" }, { int: "0" } ] },
+      { prim: "NONE", args: [ { prim: "key_hash" } ] },
+      { prim: "CREATE_CONTRACT",
         args:
-         [ [ { prim: 'PUSH',
-               args: [ { prim: 'mutez', args: [] }, { int: '0' } ] },
-             { prim: 'NONE', args: [ { prim: 'key_hash', args: [] } ] },
-             { prim: 'CREATE_CONTRACT',
-               args:
-                [ [ { prim: 'parameter', args: [ callback_type ] },
-                    { prim: 'storage', args: [ { prim: 'unit', args: [] } ] },
-                    { prim: 'code', args: [ [ { prim: 'FAILWITH', args: [] } ] ] } ] ] },
-             { prim: 'DIP',
-               args:
-                [ [ { prim: 'DIP',
-                      args:
-                       [ [ { prim: 'LAMBDA (pair address unit) (pair address unit)',
-                             args:
-                              [ [ { prim: 'CAR', args: [] },
-                                  { prim: 'CONTRACT', args: [ callback_type ] },
-                                  { prim: 'IF_NONE',
+          [ [ { prim: "parameter",
+                args: [ callback_type ] },
+              { prim: "storage",
+                args: [ { prim: "unit" } ] },
+              { prim: "code",
+                args: [ [ { prim: "FAILWITH" } ] ] } ] ] },
+      { prim: "DIP",
+        args:
+          [ [ { prim: "DIP",
+                args:
+                  [ [ { prim: "LAMBDA",
+                        args:
+                          [ { prim: "pair",
+                              args:
+                                [ { prim: "address" },
+                                  { prim: "unit" } ] },
+                            { prim: "pair",
+                              args:
+                                [ { prim: "list",
                                     args:
-                                     [ [ { prim: 'PUSH',
-                                           args:
-                                            [ { prim: 'string', args: [] }, { string: 'Callback type unmatched' } ] },
-                                         { prim: 'FAILWITH', args: [] } ] ] },
-                                  { prim: '', args: [ [] ] },
-                                  { prim: 'PUSH',
-                                    args: [ parameter_type, target_contract_parameter ] },
-                                  { prim: 'PAIR', args: [] },
-                                  { prim: 'DIP',
+                                      [ { prim: "operation" } ] },
+                                  { prim: "unit" } ] },
+                            [ { prim: "CAR" },
+                              { prim: "CONTRACT",
+                                args: [ callback_type ] },
+                              { prim: "IF_NONE",
+                                args:
+                                  [ [ { prim: "PUSH",
+                                        args:
+                                          [ { prim:
+                                                "string" },
+                                            { string:
+                                                `Callback type unmatched` } ] },
+                                      { prim: "FAILWITH" } ],
+                                    [] ] },
+                              { prim: "PUSH",
+                                args: [ parameter_type, target_contract_parameter ] },
+                              { prim: "PAIR" },
+                              { prim: "DIP",
+                                args:
+                                  [ [ { prim: "PUSH",
+                                        args:
+                                          [ { prim:
+                                                "address" },
+                                            { string:
+                                                target_contract_address } ] },
+                                      { prim: "DUP" },
+                                      { prim: "CONTRACT",
+                                        args: target_contract_args },
+                                      { prim: "IF_NONE",
+                                        args:
+                                          [ [ { prim:
+                                                  "FAILWITH" } ],
+                                            [ { prim: "DIP",
+                                                args:
+                                                  [ [ { prim:
+                                                    "DROP" } ] ] } ] ] },
+                                      { prim: "PUSH",
+                                        args:
+                                          [ { prim: "mutez" },
+                                            { int: "0" } ] } ] ] },
+                              { prim: "TRANSFER_TOKENS" },
+                              { prim: "DIP",
+                                args:
+                                  [ [ { prim: "NIL",
+                                        args:
+                                          [ { prim:
+                                                "operation" } ] } ] ] },
+                              { prim: "CONS" },
+                              { prim: "DIP",
+                                args:
+                                  [ [ { prim: "UNIT" } ] ] },
+                              { prim: "PAIR" } ] ] } ] ] },
+              { prim: "APPLY" },
+              { prim: "DIP",
+                args:
+                  [ [ { prim: "PUSH",
+                        args:
+                          [ { prim: "address" },
+                            { string:
+                                exec_lambda_address } ] },
+                      { prim: "DUP" },
+                      { prim: "CONTRACT",
+                        args:
+                          [ { prim: "lambda",
+                              args:
+                                [ { prim: "unit" },
+                                  { prim: "pair",
                                     args:
-                                     [ [ { prim: 'PUSH',
-                                           args:
-                                            [ { prim: 'address', args: [] },
-                                              { string: target_contract_address } ] },
-                                         { prim: 'DUP', args: [] },
-                                         { prim: 'CONTRACT',
-                                           args:
-                                             [ { prim: `%${target_contract_entrypoint}`, args: [] },
-                                               { prim: 'pair',
-                                                 args:
-                                                   [ parameter_type,
-                                                     { prim: 'contract', args: [ callback_type ] } ] } ] },
-                                         { prim: 'IF_NONE',
-                                           args: [ [ { prim: 'FAILWITH', args: [] } ] ] },
-                                         { prim: '',
-                                           args:
-                                            [ [ { prim: 'DIP', args: [ [ { prim: 'DROP', args: [] } ] ] } ] ] },
-                                         { prim: 'PUSH',
-                                           args: [ { prim: 'mutez', args: [] }, { int: '0' } ] } ] ] },
-                                  { prim: 'TRANSFER_TOKENS', args: [] },
-                                  { prim: 'DIP',
-                                    args:
-                                     [ [ { prim: 'NIL', args: [ { prim: 'operation', args: [] } ] } ] ] },
-                                  { prim: 'CONS', args: [] },
-                                  { prim: 'DIP', args: [ [ { prim: 'UNIT', args: [] } ] ] },
-                                  { prim: 'PAIR', args: [] } ] ] } ] ] },
-                    { prim: 'APPLY', args: [] },
-                    { prim: 'DIP',
-                      args:
-                       [ [ { prim: 'PUSH',
-                             args:
-                              [ { prim: 'address', args: [] },
-                                { string: exec_lambda_address } ] },
-                           { prim: 'DUP', args: [] },
-                           { prim: 'CONTRACT',
-                             args:
-                              [ { prim: 'lambda',
-                                  args:
-                                   [ { prim: 'unit', args: [] },
-                                     { prim: 'pair',
-                                       args:
-                                        [ { prim: 'list', args: [ { prim: 'operation', args: [] } ] },
-                                          { prim: 'unit', args: [] } ] } ] } ] },
-                           { prim: 'IF_NONE',
-                             args: [ [ { prim: 'FAILWITH', args: [] } ] ] },
-                           { prim: '',
-                             args:
-                              [ [ { prim: 'DIP', args: [ [ { prim: 'DROP', args: [] } ] ] } ] ] },
-                           { prim: 'PUSH',
-                             args: [ { prim: 'mutez', args: [] }, { int: '0' } ] } ] ] },
-                    { prim: 'TRANSFER_TOKENS', args: [] },
-                    { prim: 'DIP',
-                      args:
-                       [ [ { prim: 'NIL', args: [ { prim: 'operation', args: [] } ] } ] ] },
-                    { prim: 'CONS', args: [] } ] ] },
-             { prim: 'CONS', args: [] },
-             { prim: 'DIP', args: [ [ { prim: 'UNIT', args: [] } ] ] },
-             { prim: 'PAIR', args: [] } ] ] } ]);
+                                      [ { prim: "list",
+                                          args:
+                                            [ { prim:
+                                                  "operation" } ] },
+                                        { prim: "unit" } ] } ] } ] },
+                      { prim: "IF_NONE",
+                        args:
+                          [ [ { prim: "FAILWITH" } ],
+                            [ { prim: "DIP",
+                                args:
+                                  [ [ { prim: "DROP" } ] ] } ] ] },
+                      { prim: "PUSH",
+                        args:
+                          [ { prim: "mutez" },
+                            { int: "0" } ] } ] ] },
+              { prim: "TRANSFER_TOKENS" },
+              { prim: "DIP",
+                args:
+                  [ [ { prim: "NIL",
+                        args: [ { prim: "operation" } ] } ] ] },
+              { prim: "CONS" } ] ] }, { prim: "CONS" },
+      { prim: "DIP", args: [ [ { prim: "UNIT" } ] ] },
+      { prim: "PAIR" } ]);
 }
 
 const test_lambda =
@@ -301,11 +359,11 @@ async function main() {
   Tezos.setProvider({ rpc: 'https://api.tez.ie/rpc/babylonnet' });
   Tezos.importKey(email, password, mnemonic.join(" "), secret);
 
-  const lambda_parameter = await view_to_void_lambda({exec_lambda_address: 'KT1NFUsGvAomSSNnKjps8RL1EjGKfWQmM4iw',
-                                                      target_contract_address: 'KT1XQKa1N6e9VNLyNbhc6UMEZRJbnAb3wqAg',
-                                                      target_contract_parameter: ml2mic('Unit'),
+  const lambda_parameter = await view_to_void_lambda({exec_lambda_address: 'KT1E1trWsE1A9yrbgNeRJC54VCYgEtrbYLSE',
+                                                      target_contract_address: 'KT1RUhPAABRhZBctcsWFtymyjpuBQdLTqaAQ',
+                                                      target_contract_parameter: { prim: "Unit" },
                                                       target_contract_entrypoint: 'getTotalSupply'});
-/*   p(lambda_parameter); */
+  /* p(lambda_parameter); */
 
 
   /* const target_contract = await Tezos.contract.at('KT1NFUsGvAomSSNnKjps8RL1EjGKfWQmM4iw'); */
@@ -320,7 +378,8 @@ async function main() {
 
   var resp;
   try {
-    resp = await send_retry(target_contract.methods.main(test_lambda), { amount: 0 });
+    /* resp = await send_retry(target_contract.methods.main(test_lambda), { amount: 0 }); */
+    resp = await send_retry(target_contract.methods.main(lambda_parameter), { amount: 0 });
     await resp.confirmation()
     /* p(resp); */
     /* const (results : OperationContentsAndResult[]) */
@@ -341,7 +400,8 @@ async function main() {
     }
     const failed_internal_operation = failed_internal_operations[0];
     /* p(failed_internal_operation?.parameters) */
-    p(failed_internal_operation?.parameters?.value)
+    p({result: failed_internal_operation?.parameters?.value});
+    p(resp.results[0]);
 
     /* p(resp.results[0].metadata.internal_operation_results.filter(x => { */
     /*   return x?.result?.status === 'failed'; */
