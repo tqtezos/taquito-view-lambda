@@ -72,8 +72,6 @@ async function viewToVoidLambda(
     contractEntrypoint
   );
 
-  log([parameter, callback]);
-
   let contractArgs: any;
   if (contractEntrypoint === "default") {
     contractArgs = [
@@ -133,8 +131,6 @@ async function main() {
   );
 
   const contract = await Tezos.contract.at(lambdaAddress);
-
-  // log(contract);
 
   let resp: any;
   try {
