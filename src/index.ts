@@ -122,7 +122,7 @@ async function sendRetry(
       return await sendRetry(method, args, n + 1);
     }
 
-    process.stdout.write("[FATAL]: ");
+    process.stdout.write("[FATAL - `sendRetry`]: ");
     log(err);
     process.exit(1);
   }
@@ -134,7 +134,7 @@ async function executeLambdaView(
   lambdaAddress: string = "KT1E1trWsE1A9yrbgNeRJC54VCYgEtrbYLSE"
 ) {
   const lambdaContract = await Tezos.contract.at(lambdaAddress);
-  const lambdaParameter = viewToVoidLambda(
+  const lambdaParameter = await viewToVoidLambda(
     lambdaAddress,
     contractAddress,
     { prim: "Unit" },
@@ -177,7 +177,7 @@ function importKeyFromArgFile() {
 }
 
 async function testLambdaView() {
-  Tezos.setProvider({ rpc: "https://api.tez.ie/rpc/babylonnet" });
+  Tezos.setProvider({ rpc: "https://rpcalpha.tzbeta.net" });
   importKeyFromArgFile();
   const fa12Address = "KT1RUhPAABRhZBctcsWFtymyjpuBQdLTqaAQ";
   const result = await executeLambdaView(fa12Address, "getTotalSupply");
