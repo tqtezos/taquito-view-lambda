@@ -41,7 +41,11 @@ async function getEntrypoint(
   return entrypoint;
 }
 
-function validateEntrypoint(entrypoint: Expr) {
+async function getView(
+  contractAddress: string,
+  entrypointName: string = "default"
+): Promise<[Expr, Expr]> {
+  const entrypoint = await getEntrypoint(contractAddress, entrypointName);
   if (!("prim" in entrypoint) || !entrypoint.args) {
     // TODO: Enhance this error message to be more descriptive
     throw Error("Entrypoint args undefined");
@@ -71,25 +75,13 @@ function validateEntrypoint(entrypoint: Expr) {
   return [parameter, callbackContract.args[0]] as [Expr, Expr];
 }
 
-/* Expected form: */
-/* [ { prim: 'unit' }, */
-/*   { prim: 'contract', args: [ { prim: 'nat' } ] } ] */
-async function getViewEntrypoint(
-  contractAddress: string,
-  entrypointName: string = "default"
-): Promise<[Expr, Expr]> {
-  const entrypoint = await getEntrypoint(contractAddress, entrypointName);
-  return validateEntrypoint(entrypoint);
-}
-
 async function viewToVoidLambda(
   lambdaAddress: string,
   contractAddress: string,
   contractParameter: Expr,
   entrypointName: string = "default"
 ): Promise<object> {
-  const entrypoint = await getViewEntrypoint(contractAddress, entrypointName);
-  const [parameter, callback] = entrypoint;
+  const [parameter, callback] = await getView(contractAddress, entrypointName);
 
   let contractArgs: Expr[] = [
     {
@@ -134,60 +126,70 @@ async function sendRetry(
   }
 }
 
-async function main() {
+async function executeLambdaView(
+  contractAddress: string,
+  method: string,
+  lambdaAddress?: string
+) {
+  const lambdaAddress_ =
+    lambdaAddress || "KT1E1trWsE1A9yrbgNeRJC54VCYgEtrbYLSE";
+  const lambdaParameter = await viewToVoidLambda(
+    lambdaAddress_,
+    contractAddress,
+    { prim: "Unit" },
+    method
+  );
+
+  const lambdaContract = await Tezos.contract.at(lambdaAddress_);
+  const mainMethod = lambdaContract.methods.main(lambdaParameter);
+  const response = await sendRetry(mainMethod, { amount: 0 });
+  await response.confirmation();
+
+  if (response.results?.length !== 1) {
+    throw Error("Response results not singleton");
+  }
+
+  const internalOpResults =
+    response.results[0]?.metadata?.internal_operation_results;
+  const failedInternalOperations = internalOpResults.filter(
+    (x: any) => x?.result?.status === "failed"
+  );
+
+  if (failedInternalOperations.length !== 1) {
+    throw Error("Failed internal operaations not singleton");
+  }
+
+  const failedInternalOperation = failedInternalOperations[0];
+  return { result: failedInternalOperation?.parameters?.value };
+}
+
+// Test from command line
+
+function importKeyFromArgFile() {
   const keyFile = process.argv[2];
   if (!keyFile) {
     console.error("No key faucet file provided.");
     process.exit(1);
   }
-  const { email, password, mnemonic, secret } = JSON.parse(
-    fs.readFileSync(keyFile).toString()
-  );
-  Tezos.setProvider({ rpc: "https://api.tez.ie/rpc/babylonnet" });
+  const credentials = JSON.parse(fs.readFileSync(keyFile).toString());
+  const { email, password, mnemonic, secret } = credentials;
   Tezos.importKey(email, password, mnemonic.join(" "), secret);
+}
 
-  const lambdaAddress = "KT1E1trWsE1A9yrbgNeRJC54VCYgEtrbYLSE";
+async function testLambdaView() {
+  Tezos.setProvider({ rpc: "https://api.tez.ie/rpc/babylonnet" });
+  importKeyFromArgFile();
   const fa12Address = "KT1RUhPAABRhZBctcsWFtymyjpuBQdLTqaAQ";
+  const result = await executeLambdaView(fa12Address, "getTotalSupply");
+  log(result);
+}
 
-  const lambdaParameter = await viewToVoidLambda(
-    lambdaAddress,
-    fa12Address,
-    { prim: "Unit" },
-    "getTotalSupply"
-  );
-
-  const lambdaContract = await Tezos.contract.at(lambdaAddress);
-  lambdaContract.storage();
-
+async function main() {
   try {
-    const mainMethod = lambdaContract.methods.main(lambdaParameter);
-
-    const response = await sendRetry(mainMethod, { amount: 0 });
-    await response.confirmation();
-
-    if (response.results?.length !== 1) {
-      throw Error("Response results not singleton");
-    }
-
-    const internalOpResults =
-      response.results[0]?.metadata?.internal_operation_results;
-    const failedInternalOperations = internalOpResults.filter(
-      (x: any) => x?.result?.status === "failed"
-    );
-
-    if (failedInternalOperations.length !== 1) {
-      throw Error("Failed internal operaations not singleton");
-    }
-
-    const failedInternalOperation = failedInternalOperations[0];
-
-    log({ result: failedInternalOperation?.parameters?.value });
-    log(response.results[0]);
+    await testLambdaView();
   } catch (e) {
     process.stdout.write("[FATAL]: ");
     log(e);
     process.exit(1);
   }
 }
-
-main();
