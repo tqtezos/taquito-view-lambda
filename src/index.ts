@@ -122,7 +122,9 @@ async function sendRetry(
       return await sendRetry(method, args, n + 1);
     }
 
-    throw err;
+    process.stdout.write("[FATAL]: ");
+    log(err);
+    process.exit(1);
   }
 }
 
