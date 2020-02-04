@@ -131,18 +131,16 @@ async function sendRetry(
 async function executeLambdaView(
   contractAddress: string,
   method: string,
-  lambdaAddress?: string
+  lambdaAddress: string = "KT1E1trWsE1A9yrbgNeRJC54VCYgEtrbYLSE"
 ) {
-  const lambdaAddress_ =
-    lambdaAddress || "KT1E1trWsE1A9yrbgNeRJC54VCYgEtrbYLSE";
-  const lambdaParameter = await viewToVoidLambda(
-    lambdaAddress_,
+  const lambdaContract = await Tezos.contract.at(lambdaAddress);
+  const lambdaParameter = viewToVoidLambda(
+    lambdaAddress,
     contractAddress,
     { prim: "Unit" },
     method
   );
 
-  const lambdaContract = await Tezos.contract.at(lambdaAddress_);
   const mainMethod = lambdaContract.methods.main(lambdaParameter);
   const response = await sendRetry(mainMethod, { amount: 0 });
   await response.confirmation();
