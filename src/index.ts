@@ -1,7 +1,25 @@
 import fs from "fs";
 import util from "util";
 import { Tezos } from "@taquito/taquito";
+import { MichelsonV1Expression } from "@taquito/rpc";
+import {
+  ContractMethod,
+  LegacyContractMethod
+} from "@taquito/taquito/dist/types/contract/contract";
+import { TransactionOperation } from "@taquito/taquito/dist/types/operations/transaction-operation";
 import voidLambda from "./void_lambda";
+
+type Expr = MichelsonV1Expression;
+type Method = ContractMethod | LegacyContractMethod;
+
+interface ISendParams {
+  fee?: number;
+  storageLimit?: number;
+  gasLimit?: number;
+  amount?: number;
+}
+
+type SendParams = ISendParams | undefined;
 
 function log(x: any) {
   console.log(util.inspect(x, false, null, true /* enable colors */));
@@ -10,7 +28,7 @@ function log(x: any) {
 async function getEntrypoint(
   contractAddress: string,
   entrypointName: string = "default"
-): Promise<object> {
+): Promise<Expr> {
   const response = await Tezos.rpc.getEntrypoints(contractAddress);
   const entrypoint = response.entrypoints[entrypointName];
 
@@ -23,71 +41,65 @@ async function getEntrypoint(
   return entrypoint;
 }
 
+function validateEntrypoint(entrypoint: Expr) {
+  if (!("prim" in entrypoint) || !entrypoint.args) {
+    // TODO: Enhance this error message to be more descriptive
+    throw Error("Entrypoint args undefined");
+  }
+
+  const args = Array.from(entrypoint.args) as [Expr, Expr];
+  const [parameter, callbackContract] = args;
+
+  if (!("prim" in callbackContract) || !callbackContract.args) {
+    // TODO: Enhance this error message to be more descriptive
+    throw Error("Callback contract args undefined");
+  }
+
+  let message;
+  if (entrypoint.prim !== "pair") {
+    message = `Expected {'prim': 'pair', ..} but found {'prim': ${entrypoint.prim}, ..}`;
+  } else if (args.length !== 2) {
+    message = `Expected an Array of length 2, but found: ${args}`;
+  } else if (callbackContract.prim !== "contract") {
+    message = `Expected a {prim: 'contract', ...}, but found: ${callbackContract.prim}`;
+  } else if (callbackContract.args?.length !== 1) {
+    message = `Expected a single argument to 'contract', but found: ${callbackContract.args}`;
+  }
+
+  if (message) throw Error(message);
+
+  return [parameter, callbackContract.args[0]] as [Expr, Expr];
+}
+
 /* Expected form: */
 /* [ { prim: 'unit' }, */
 /*   { prim: 'contract', args: [ { prim: 'nat' } ] } ] */
-async function getViewEntrypoints(
+async function getViewEntrypoint(
   contractAddress: string,
   entrypointName: string = "default"
-): Promise<[object, object]> {
-  const entrypoint: any = await getEntrypoint(contractAddress, entrypointName);
-
-  if (entrypoint["prim"] !== "pair") {
-    throw Error(
-      `Expected {'prim': 'pair', ..} but found {'prim': ${entrypoint["prim"]}, ..}`
-    );
-  }
-
-  const args = Array.from(entrypoint["args"]) as [any, any];
-
-  if (args.length !== 2) {
-    throw Error(`Expected an Array of length 2, but found: ${args}`);
-  }
-
-  const [parameter, callbackContract] = args;
-
-  if (callbackContract["prim"] !== "contract") {
-    throw Error(
-      `Expected a {prim: 'contract', ...}, but found: ${callbackContract["prim"]}`
-    );
-  }
-
-  if (callbackContract["args"]?.length !== 1) {
-    throw Error(
-      `Expected a single argument to 'contract', but found: ${callbackContract["args"]}`
-    );
-  }
-
-  return [parameter, callbackContract["args"][0]];
+): Promise<[Expr, Expr]> {
+  const entrypoint = await getEntrypoint(contractAddress, entrypointName);
+  return validateEntrypoint(entrypoint);
 }
 
 async function viewToVoidLambda(
-  execLambdaAddress: string,
+  lambdaAddress: string,
   contractAddress: string,
-  contractParameter: any,
-  contractEntrypoint: string = "default"
+  contractParameter: Expr,
+  entrypointName: string = "default"
 ): Promise<object> {
-  const [parameter, callback] = await getViewEntrypoints(
-    contractAddress,
-    contractEntrypoint
-  );
+  const entrypoint = await getViewEntrypoint(contractAddress, entrypointName);
+  const [parameter, callback] = entrypoint;
 
-  let contractArgs: any;
-  if (contractEntrypoint === "default") {
-    contractArgs = [
-      { string: `%${contractEntrypoint}` },
-      {
-        prim: "pair",
-        args: [parameter, { prim: "contract", args: [callback] }]
-      }
-    ];
-  } else {
-    contractArgs = [
-      {
-        prim: "pair",
-        args: [parameter, { prim: "contract", args: [callback] }]
-      }
-    ];
+  let contractArgs: Expr[] = [
+    {
+      prim: "pair",
+      args: [parameter, { prim: "contract", args: [callback] }]
+    }
+  ];
+
+  if (entrypointName === "default") {
+    contractArgs = ([{ string: "%default" }] as Expr[]).concat(contractArgs);
   }
 
   return voidLambda({
@@ -96,11 +108,15 @@ async function viewToVoidLambda(
     contractParameter,
     contractAddress,
     contractArgs,
-    execLambdaAddress
+    lambdaAddress
   });
 }
 
-async function sendRetry(method: any, args: any, n: number = 0): Promise<any> {
+async function sendRetry(
+  method: Method,
+  args: SendParams,
+  n: number = 0
+): Promise<TransactionOperation> {
   try {
     return await method.send(args);
   } catch (err) {
@@ -109,7 +125,8 @@ async function sendRetry(method: any, args: any, n: number = 0): Promise<any> {
       err.message.match(/contract\.counter_in_the_past/) ||
       err.message.match(/upstream request timeout/)
     ) {
-      console.log(`Retry number ${n + 1}`);
+      console.log(err.message);
+      console.log(`Retry number ${n + 1}...`);
       return await sendRetry(method, args, n + 1);
     }
 
@@ -118,7 +135,16 @@ async function sendRetry(method: any, args: any, n: number = 0): Promise<any> {
 }
 
 async function main() {
+  const keyFile = process.argv[2];
+  if (!keyFile) {
+    console.error("No key faucet file provided.");
+    process.exit(1);
+  }
+  const { email, password, mnemonic, secret } = JSON.parse(
+    fs.readFileSync(keyFile).toString()
+  );
   Tezos.setProvider({ rpc: "https://api.tez.ie/rpc/babylonnet" });
+  Tezos.importKey(email, password, mnemonic.join(" "), secret);
 
   const lambdaAddress = "KT1E1trWsE1A9yrbgNeRJC54VCYgEtrbYLSE";
   const fa12Address = "KT1RUhPAABRhZBctcsWFtymyjpuBQdLTqaAQ";
@@ -130,18 +156,22 @@ async function main() {
     "getTotalSupply"
   );
 
-  const contract = await Tezos.contract.at(lambdaAddress);
+  const lambdaContract = await Tezos.contract.at(lambdaAddress);
+  lambdaContract.storage();
 
-  let resp: any;
   try {
-    const mainMethod = contract.methods.main(lambdaParameter);
-    resp = await sendRetry(mainMethod, { amount: 0 });
-    await resp.confirmation();
+    const mainMethod = lambdaContract.methods.main(lambdaParameter);
 
-    if (resp.results?.length !== 1) {
+    const response = await sendRetry(mainMethod, { amount: 0 });
+    await response.confirmation();
+
+    if (response.results?.length !== 1) {
       throw Error("Response results not singleton");
     }
-    const failedInternalOperations = resp.results[0]?.metadata?.internal_operation_results?.filter(
+
+    const internalOpResults =
+      response.results[0]?.metadata?.internal_operation_results;
+    const failedInternalOperations = internalOpResults.filter(
       (x: any) => x?.result?.status === "failed"
     );
 
@@ -152,9 +182,11 @@ async function main() {
     const failedInternalOperation = failedInternalOperations[0];
 
     log({ result: failedInternalOperation?.parameters?.value });
-    log(resp.results[0]);
+    log(response.results[0]);
   } catch (e) {
+    process.stdout.write("[FATAL]: ");
     log(e);
+    process.exit(1);
   }
 }
 

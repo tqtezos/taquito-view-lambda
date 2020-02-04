@@ -1,6 +1,7 @@
 {
+  "license": "MIT",
   "scripts": {
-    "repl": "yarn exec ts-node"
+    "start": "yarn exec ts-node src/index.ts"
   },
   "dependencies": {
     "@taquito/taquito": "^5.2.0-beta.1",

@@ -1,10 +1,12 @@
+import { MichelsonV1Expression } from "@taquito/rpc";
+
 interface VoidLambdaParams {
   callback: object;
   parameter: object;
-  contractParameter: any;
+  contractParameter: MichelsonV1Expression;
   contractAddress: string;
-  contractArgs: any;
-  execLambdaAddress: string;
+  contractArgs: MichelsonV1Expression[];
+  lambdaAddress: string;
 }
 
 export default function(params: VoidLambdaParams) {
@@ -14,7 +16,7 @@ export default function(params: VoidLambdaParams) {
     contractParameter,
     contractAddress,
     contractArgs,
-    execLambdaAddress
+    lambdaAddress
   } = params;
 
   return [
@@ -124,7 +126,7 @@ export default function(params: VoidLambdaParams) {
               [
                 {
                   prim: "PUSH",
-                  args: [{ prim: "address" }, { string: execLambdaAddress }]
+                  args: [{ prim: "address" }, { string: lambdaAddress }]
                 },
                 { prim: "DUP" },
                 {
