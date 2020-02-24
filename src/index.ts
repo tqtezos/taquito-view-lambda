@@ -1,16 +1,13 @@
+import { MichelsonV1Expression } from "@taquito/rpc";
+import { Tezos, TezosOperationError } from "@taquito/taquito";
+import { ContractMethod } from "@taquito/taquito/dist/types/contract/contract";
+import { TransactionOperation } from "@taquito/taquito/dist/types/operations/transaction-operation";
 import fs from "fs";
 import util from "util";
-import { Tezos } from "@taquito/taquito";
-import { MichelsonV1Expression } from "@taquito/rpc";
-import {
-  ContractMethod,
-  LegacyContractMethod
-} from "@taquito/taquito/dist/types/contract/contract";
-import { TransactionOperation } from "@taquito/taquito/dist/types/operations/transaction-operation";
 import voidLambda from "./void_lambda";
 
 type Expr = MichelsonV1Expression;
-type Method = ContractMethod | LegacyContractMethod;
+type Method = ContractMethod;
 
 interface ISendParams {
   fee?: number;
@@ -100,7 +97,8 @@ async function viewToVoidLambda(
     contractParameter,
     contractAddress,
     contractArgs,
-    lambdaAddress
+    lambdaAddress,
+    entrypoint: entrypointName,
   });
 }
 
@@ -141,31 +139,20 @@ async function executeLambdaView(
     method
   );
 
-  const mainMethod = lambdaContract.methods.main(lambdaParameter);
-  const response = await sendRetry(mainMethod, { amount: 0 });
-  await response.confirmation();
+  try {
+    await lambdaContract.methods.main(lambdaParameter).send();
+  } catch (ex) {
+    if (ex instanceof TezosOperationError) {
+      const lastError: any = ex.errors[ex.errors.length - 1];
 
-  if (response.results?.length !== 1) {
-    throw Error("Response results not singleton");
+      const failedWith = lastError.with;
+      return failedWith;
+    }
   }
-
-  const internalOpResults =
-    response.results[0]?.metadata?.internal_operation_results;
-  const failedInternalOperations = internalOpResults.filter(
-    (x: any) => x?.result?.status === "failed"
-  );
-
-  if (failedInternalOperations.length !== 1) {
-    throw Error("Failed internal operaations not singleton");
-  }
-
-  const failedInternalOperation = failedInternalOperations[0];
-  return { result: failedInternalOperation?.parameters?.value };
 }
 
 // Test from command line
-
-function importKeyFromArgFile() {
+async function importKeyFromArgFile() {
   const keyFile = process.argv[2];
   if (!keyFile) {
     console.error("No key faucet file provided.");
@@ -173,12 +160,13 @@ function importKeyFromArgFile() {
   }
   const credentials = JSON.parse(fs.readFileSync(keyFile).toString());
   const { email, password, mnemonic, secret } = credentials;
-  Tezos.importKey(email, password, mnemonic.join(" "), secret);
+  await Tezos.importKey(email, password, mnemonic.join(" "), secret);
 }
 
 async function testLambdaView() {
-  Tezos.setProvider({ rpc: "https://rpcalpha.tzbeta.net" });
-  importKeyFromArgFile();
+  Tezos.setProvider({ rpc: "https://api.tez.ie/rpc/babylonnet" });
+  await importKeyFromArgFile();
+
   const fa12Address = "KT1RUhPAABRhZBctcsWFtymyjpuBQdLTqaAQ";
   const result = await executeLambdaView(fa12Address, "getTotalSupply");
   log(result);
