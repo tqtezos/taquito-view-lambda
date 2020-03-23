@@ -7,16 +7,18 @@ interface VoidLambdaParams {
   contractAddress: string;
   contractArgs: MichelsonV1Expression[];
   lambdaAddress: string;
+  entrypoint: string;
 }
 
-export default function(params: VoidLambdaParams) {
+export default function (params: VoidLambdaParams) {
   const {
     callback,
     parameter,
     contractParameter,
     contractAddress,
     contractArgs,
-    lambdaAddress
+    lambdaAddress,
+    entrypoint
   } = params;
 
   return [
@@ -28,7 +30,9 @@ export default function(params: VoidLambdaParams) {
         [
           { prim: "parameter", args: [callback] },
           { prim: "storage", args: [{ prim: "unit" }] },
-          { prim: "code", args: [[{ prim: "FAILWITH" }]] }
+          {
+            prim: "code", args: [[{ prim: 'CAR' }, { prim: "FAILWITH" }]]
+          }
         ]
       ]
     },
@@ -86,7 +90,7 @@ export default function(params: VoidLambdaParams) {
                               prim: "PUSH",
                               args: [
                                 { prim: "address" },
-                                { string: contractAddress }
+                                { string: `${contractAddress}%${entrypoint}` }
                               ]
                             },
                             { prim: "DUP" },
@@ -94,7 +98,13 @@ export default function(params: VoidLambdaParams) {
                             {
                               prim: "IF_NONE",
                               args: [
-                                [{ prim: "FAILWITH" }],
+                                [{
+                                  prim: "PUSH",
+                                  args: [
+                                    { prim: "string" },
+                                    { string: `Contract does not exists` }
+                                  ]
+                                }, { prim: "FAILWITH" }],
                                 [{ prim: "DIP", args: [[{ prim: "DROP" }]] }]
                               ]
                             },
@@ -150,7 +160,13 @@ export default function(params: VoidLambdaParams) {
                 {
                   prim: "IF_NONE",
                   args: [
-                    [{ prim: "FAILWITH" }],
+                    [{
+                      prim: "PUSH",
+                      args: [
+                        { prim: "string" },
+                        { string: `Contract does not exists` }
+                      ]
+                    }, { prim: "FAILWITH" }],
                     [{ prim: "DIP", args: [[{ prim: "DROP" }]] }]
                   ]
                 },
